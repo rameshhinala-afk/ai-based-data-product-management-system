@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Product Management</title>
+<style>
+  *{box-sizing:border-box} body{font-family:system-ui,sans-serif;margin:0;background:#f4f6fa;color:#1c2333}
+  header{background:#2b3a67;color:#fff;padding:16px 28px} h1{margin:0;font-size:20px}
+  main{max-width:1150px;margin:20px auto;padding:0 16px;display:grid;gap:16px}
+  .card{background:#fff;border-radius:10px;padding:16px;box-shadow:0 1px 4px #0001}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+  .stat b{display:block;font-size:22px} .stat span{color:#667}
+  table{width:100%;border-collapse:collapse;font-size:14px} th,td{padding:8px;text-align:left;border-bottom:1px solid #eee}
+  th{color:#667;font-weight:600} form{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+  input{padding:8px;border:1px solid #ccd;border-radius:6px} button{padding:8px 12px;border:0;border-radius:6px;background:#3b5bdb;color:#fff;cursor:pointer}
+  button.alt{background:#e9ecf5;color:#223} button.del{background:#e03131}
+  .tag{padding:2px 8px;border-radius:99px;font-size:12px;background:#e7ecff}
+  .low{background:#ffe3e3;color:#c92a2a}.overstock{background:#fff3bf;color:#8a6d00}
+  pre{background:#f4f6fa;padding:10px;border-radius:6px;overflow:auto;font-size:13px}
+  .alert{padding:6px 0;border-bottom:1px solid #eee;font-size:14px}
+</style>
+</head>
+<body>
+<header><h1>🤖 AI-Based Data Product Management System</h1></header>
+<main>
+  <section class="card stats" id="stats"></section>
+  <section class="card"><h3>⚠️ AI Stock Alerts</h3><div id="alerts">Loading…</div></section>
+
+  <section class="card">
+    <h3>Add Product</h3>
+    <form id="addForm">
+      <input name="name" placeholder="Name" required>
+      <input name="description" placeholder="Description">
+      <input name="category" placeholder="Category (blank = AI)">
+      <input name="price" type="number" step="0.01" placeholder="Price" required>
+      <input name="cost" type="number" step="0.01" placeholder="Cost">
+      <input name="stock" type="number" placeholder="Stock">
+      <button>Add</button>
+      <button type="button" class="alt" onclick="suggestCategory()">🔮 Suggest category</button>
+    </form>
+    <p id="classifyMsg"></p>
+  </section>
+
+  <section class="card">
+    <h3>Products</h3>
+    <table><thead><tr><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th></th></tr></thead>
+    <tbody id="rows"></tbody></table>
+  </section>
+
+  <section class="card" id="insightBox" hidden><h3 id="insightTitle"></h3><div id="insightBody"></div></section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const api = (url, opt) => fetch(url, opt && {headers:{'Content-Type':'application/json'}, ...opt}).then(r => r.json());
+
+async function load() {
+  const [products, dash] = await Promise.all([api('/api/products'), api('/api/dashboard')]);
+  $('#stats').innerHTML = `
+    <div class="stat"><b>${dash.total_products}</b><span>Products</span></div>
+    <div class="stat"><b>$${dash.inventory_value.toLocaleString()}</b><span>Inventory value</span></div>
+    <div class="stat"><b>${dash.alerts.length}</b><span>AI alerts</span></div>`;
+  $('#alerts').innerHTML = dash.alerts.map(a =>
+    `<div class="alert"><span class="tag ${a.status}">${a.status}</span> <b>${a.name}</b> — ${a.action}</div>`).join('') || 'All good ✅';
+  $('#rows').innerHTML = products.map(p => `<tr>
+    <td>${p.name}</td><td><span class="tag">${p.category || '-'}</span></td>
+    <td>$${p.price.toFixed(2)}</td><td>${p.stock}</td>
+    <td><button onclick="showInsights(${p.id})">AI Insights</button>
+        <button class="del" onclick="del(${p.id})">✕</button></td></tr>`).join('');
+}
+
+$('#addForm').onsubmit = async e => {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target));
+  await api('/api/products', {method:'POST', body: JSON.stringify(data)});
+  e.target.reset(); load();
+};
+
+async function suggestCategory() {
+  const f = $('#addForm');
+  const r = await api('/api/ai/classify', {method:'POST',
+    body: JSON.stringify({name: f.name.value, description: f.description.value})});
+  $('#classifyMsg').textContent = r.category
+    ? `Suggested: ${r.category} (confidence ${(r.confidence*100).toFixed(0)}%)` : r.note;
+  if (r.category) f.category.value = r.category;
+}
+
+async function del(id) { if (confirm('Delete product?')) { await api('/api/products/' + id, {method:'DELETE'}); load(); } }
+
+async function showInsights(id) {
+  const r = await api(`/api/products/${id}/insights`);
+  $('#insightBox').hidden = false;
+  $('#insightTitle').textContent = '📊 Insights: ' + r.product;
+  $('#insightBody').innerHTML = `
+    <p><b>Demand (next 7 days):</b> ${r.forecast.total ?? 0} units · trend <b>${r.forecast.trend}</b> · avg ${r.forecast.avg_daily ?? '-'}/day</p>
+    <p><b>Price suggestion:</b> $${r.pricing.suggested_price} <small>(${r.pricing.note}${r.pricing.elasticity ? ', elasticity ' + r.pricing.elasticity : ''})</small></p>
+    <p><b>Stock:</b> ${r.stock.action} <small>(cover: ${r.stock.days_of_cover ?? '-'} days)</small></p>
+    <p><b>Anomalies:</b></p><pre>${r.anomalies.length ? JSON.stringify(r.anomalies, null, 2) : 'None detected'}</pre>`;
+  $('#insightBox').scrollIntoView({behavior:'smooth'});
+}
+load();
+</script>
+</body>
+</html>
